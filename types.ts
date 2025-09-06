@@ -64,6 +64,7 @@ export enum ReportType {
   OPEN_TEXT = 'open_text',
   MULTIPLE_CHOICE = 'multiple_choice',
   YES_NO = 'yes_no',
+  CHECKLIST = 'checklist',
 }
 
 export interface ReportOption {
@@ -86,6 +87,7 @@ export interface ReportButtonConfig {
   options?: ReportOption[];
   followUp?: FollowUpConfig;
   departmentId?: string;
+  staffId?: string;
 }
 
 export interface ReportSubmission {

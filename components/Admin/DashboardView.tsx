@@ -1,9 +1,11 @@
 
+
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { getStaffByOrganizer, getStaffActivity, getParticipantCompaniesByEvent, getReportsByEvent, getEvents, getOrganizerCompanyById } from '../../services/api';
 import { Staff, StaffActivity, ParticipantCompany, ReportSubmission, Event, OrganizerCompany } from '../../types';
 import LoadingSpinner from '../LoadingSpinner';
 import Input from '../Input';
+import Modal from '../Modal';
 
 // Tell TypeScript that jspdf is loaded globally from the CDN
 declare const jspdf: any;
@@ -13,10 +15,36 @@ interface Props {
 }
 
 const DownloadIcon = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <svg xmlns="http://www.w.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
     </svg>
 );
+
+// Accordion component for the modal
+const AccordionItem: React.FC<{ title: string; count: number; children: React.ReactNode }> = ({ title, count, children }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    return (
+        <div className="border-b border-border last:border-b-0">
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className="w-full flex justify-between items-center py-3 px-1 text-left hover:bg-secondary-hover rounded-md transition-colors"
+                aria-expanded={isOpen}
+            >
+                <span className="font-semibold flex-1 truncate pr-2">{title}</span>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="text-xs font-bold bg-secondary text-primary px-2 py-1 rounded-full">{count}</span>
+                    <svg className={`w-5 h-5 transition-transform transform ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                </div>
+            </button>
+            {isOpen && (
+                <div className="pb-3 pt-1 px-1">
+                    {children}
+                </div>
+            )}
+        </div>
+    );
+};
+
 
 const DashboardView: React.FC<Props> = ({ eventId }) => {
   const [event, setEvent] = useState<Event | null>(null);
@@ -28,6 +56,12 @@ const DashboardView: React.FC<Props> = ({ eventId }) => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState<'staff' | 'company'>('staff');
+  
+  const [selectedCompany, setSelectedCompany] = useState<ParticipantCompany | null>(null);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+
+  const [selectedStaff, setSelectedStaff] = useState<Staff | null>(null);
+  const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -70,8 +104,25 @@ const DashboardView: React.FC<Props> = ({ eventId }) => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
-  
 
+  const handleCompanyClick = (company: ParticipantCompany) => {
+    setSelectedCompany(company);
+    setIsReportModalOpen(true);
+  };
+  const handleCloseReportModal = () => {
+    setIsReportModalOpen(false);
+    setSelectedCompany(null);
+  };
+  
+  const handleStaffClick = (staffMember: Staff) => {
+    setSelectedStaff(staffMember);
+    setIsStaffModalOpen(true);
+  };
+  const handleCloseStaffModal = () => {
+      setIsStaffModalOpen(false);
+      setSelectedStaff(null);
+  };
+  
   const handleDownloadStaffReport = (member: Staff) => {
     const doc = new jspdf.jsPDF();
     const memberActivities = activities[member.id] || [];
@@ -150,6 +201,36 @@ const DashboardView: React.FC<Props> = ({ eventId }) => {
     [companies, searchTerm]
   );
 
+  const reportsByCompanyCategory = useMemo(() => {
+    if (!selectedCompany) return {};
+    const companyReports = reports.filter(r => r.boothCode === selectedCompany.boothCode);
+    
+    return companyReports.reduce((acc, report) => {
+        const { reportLabel } = report;
+        if (!acc[reportLabel]) {
+            acc[reportLabel] = [];
+        }
+        acc[reportLabel].push(report);
+        return acc;
+    }, {} as Record<string, ReportSubmission[]>);
+  }, [selectedCompany, reports]);
+  
+  const activitiesByStaffCategory = useMemo(() => {
+    if (!selectedStaff) return {};
+    const staffActivities = activities[selectedStaff.id] || [];
+    const actionRegex = /'([^']+)'/;
+
+    return staffActivities.reduce((acc, activity) => {
+      const match = activity.description.match(actionRegex);
+      const category = match ? match[1] : 'Geral';
+      if (!acc[category]) {
+        acc[category] = [];
+      }
+      acc[category].push(activity);
+      return acc;
+    }, {} as Record<string, StaffActivity[]>);
+  }, [selectedStaff, activities]);
+
   const getButtonClass = (mode: 'staff' | 'company') => {
     const base = 'px-4 py-2 rounded-lg font-semibold transition-colors duration-300 w-1/2 sm:w-auto';
     if (viewMode === mode) {
@@ -190,35 +271,34 @@ const DashboardView: React.FC<Props> = ({ eventId }) => {
       {viewMode === 'staff' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredStaff.map(member => (
-            <div key={member.id} className="bg-card p-5 rounded-lg shadow-md">
-              <div className="flex items-center justify-between mb-4">
-                 <div className="flex items-center gap-4 overflow-hidden">
-                    <img src={member.photoUrl || 'https://via.placeholder.com/150'} alt={member.name} className="w-16 h-16 rounded-full object-cover flex-shrink-0" />
-                    <div className="truncate">
-                        <h3 className="text-lg font-bold truncate">{member.name}</h3>
-                        <p className="text-sm text-text-secondary">Cód: {member.personalCode}</p>
+             <button
+                key={member.id}
+                onClick={() => handleStaffClick(member)}
+                className="bg-card p-5 rounded-lg shadow-md flex flex-col text-left hover:bg-secondary-hover transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-background focus:ring-primary"
+                aria-label={`Ver atividades de ${member.name}`}
+            >
+                <div className="flex justify-between items-start mb-4">
+                    <div className="flex items-center gap-4 overflow-hidden">
+                        <img src={member.photoUrl || 'https://via.placeholder.com/150'} alt={member.name} className="w-16 h-16 rounded-full object-cover flex-shrink-0" />
+                        <div className="truncate">
+                            <h3 className="text-lg font-bold truncate">{member.name}</h3>
+                            <p className="text-sm text-text-secondary">Cód: {member.personalCode}</p>
+                        </div>
                     </div>
-                 </div>
-                 <button onClick={() => handleDownloadStaffReport(member)} className="p-2 rounded-full hover:bg-border transition-colors flex-shrink-0" title="Baixar Relatório em PDF">
-                    <DownloadIcon />
-                 </button>
-              </div>
-              <div className="border-t border-border pt-3">
-                <h4 className="font-semibold mb-2">Registros Recentes</h4>
-                <ul className="space-y-2 text-sm max-h-40 overflow-y-auto">
-                  {activities[member.id]?.length > 0 ? (
-                    activities[member.id].map(activity => (
-                      <li key={activity.id} className="flex justify-between items-baseline">
-                        <span className="pr-2">{activity.description}</span>
-                        <span className="text-xs text-text-secondary flex-shrink-0">{new Date(activity.timestamp).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
-                      </li>
-                    ))
-                  ) : (
-                    <li className="text-text-secondary">Nenhuma atividade registrada.</li>
-                  )}
-                </ul>
-              </div>
-            </div>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); handleDownloadStaffReport(member); }}
+                        className="p-2 rounded-full hover:bg-secondary transition-colors flex-shrink-0 ml-2"
+                        title="Baixar Relatório em PDF"
+                        aria-label={`Baixar relatório para ${member.name}`}
+                    >
+                        <DownloadIcon />
+                    </button>
+                </div>
+                <div className="mt-auto pt-4 border-t border-border flex justify-between items-center">
+                    <span className="font-semibold text-text-secondary">Total de Atividades:</span>
+                    <span className="text-lg font-bold text-primary">{(activities[member.id] || []).length}</span>
+                </div>
+            </button>
           ))}
         </div>
       ) : (
@@ -226,40 +306,97 @@ const DashboardView: React.FC<Props> = ({ eventId }) => {
           {filteredCompanies.map(company => {
             const companyReports = reports.filter(r => r.boothCode === company.boothCode);
             return (
-              <div key={company.id} className="bg-card p-5 rounded-lg shadow-md flex flex-col">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="text-xl font-bold text-primary">{company.name}</h3>
+              <button
+                key={company.id}
+                onClick={() => handleCompanyClick(company)}
+                className="bg-card p-5 rounded-lg shadow-md flex flex-col text-left hover:bg-secondary-hover transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-background focus:ring-primary"
+                aria-label={`Ver registros de ${company.name}`}
+              >
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex-1 overflow-hidden">
+                    <h3 className="text-xl font-bold text-primary truncate">{company.name}</h3>
                     <p className="text-sm text-text-secondary">Cód. Estande: {company.boothCode}</p>
                   </div>
-                  <button onClick={() => handleDownloadCompanyReport(company)} className="p-2 rounded-full hover:bg-border transition-colors flex-shrink-0" title="Baixar Relatório em PDF">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDownloadCompanyReport(company); }}
+                    className="p-2 rounded-full hover:bg-secondary transition-colors flex-shrink-0 ml-2"
+                    title="Baixar Relatório em PDF"
+                    aria-label={`Baixar relatório para ${company.name}`}
+                  >
                     <DownloadIcon />
                   </button>
                 </div>
-                <div className="border-t border-border pt-3 mt-3 flex-grow">
-                  <h4 className="font-semibold mb-2">Registros Recentes</h4>
-                  <ul className="space-y-3 text-sm max-h-64 overflow-y-auto pr-2">
-                    {companyReports.length > 0 ? (
-                      companyReports.map(report => (
-                        <li key={report.id} className="border-b border-border/50 pb-2 last:border-b-0">
-                          <div className="flex justify-between items-start">
-                            <span className="font-semibold pr-2">{report.reportLabel}</span>
-                            <span className="text-xs text-text-secondary flex-shrink-0">{new Date(report.timestamp).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                          </div>
-                          <p className="text-text mt-1">
-                            <span className="font-medium">{report.staffName}:</span> "{report.response}"
-                          </p>
-                        </li>
-                      ))
-                    ) : (
-                      <li className="text-text-secondary">Nenhum registro para esta empresa.</li>
-                    )}
-                  </ul>
+                <div className="mt-auto pt-4 border-t border-border flex justify-between items-center">
+                  <span className="font-semibold text-text-secondary">Total de Registros:</span>
+                  <span className="text-lg font-bold text-primary">{companyReports.length}</span>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
+      )}
+
+      {selectedCompany && (
+        <Modal 
+          isOpen={isReportModalOpen} 
+          onClose={handleCloseReportModal} 
+          title={`Registros de ${selectedCompany.name}`}
+        >
+          <div className="max-h-[70vh] md:max-h-[60vh] overflow-y-auto -mx-4 px-4">
+            {Object.keys(reportsByCompanyCategory).length > 0 ? (
+              Object.entries(reportsByCompanyCategory).map(([category, reportList]) => (
+                <AccordionItem key={category} title={category} count={reportList.length}>
+                  <ul className="space-y-4 text-sm mt-2 pl-2">
+                    {reportList.map(report => (
+                      <li key={report.id} className="border-l-2 border-border pl-3">
+                        <p className="text-text">"{report.response}"</p>
+                        <div className="flex justify-between items-center mt-1">
+                          <span className="text-xs font-medium text-text-secondary">por: {report.staffName}</span>
+                          <span className="text-xs text-text-secondary flex-shrink-0">
+                            {new Date(report.timestamp).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </AccordionItem>
+              ))
+            ) : (
+              <p className="text-text-secondary text-center py-8">Nenhum registro encontrado para esta empresa.</p>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {selectedStaff && (
+        <Modal
+            isOpen={isStaffModalOpen}
+            onClose={handleCloseStaffModal}
+            title={`Atividades de ${selectedStaff.name}`}
+        >
+            <div className="max-h-[70vh] md:max-h-[60vh] overflow-y-auto -mx-4 px-4">
+                {Object.keys(activitiesByStaffCategory).length > 0 ? (
+                    Object.entries(activitiesByStaffCategory).map(([category, activityList]) => (
+                        <AccordionItem key={category} title={category} count={activityList.length}>
+                            <ul className="space-y-4 text-sm mt-2 pl-2">
+                                {activityList.map(activity => (
+                                    <li key={activity.id} className="border-l-2 border-border pl-3">
+                                        <p className="text-text">{activity.description}</p>
+                                        <div className="flex justify-end items-center mt-1">
+                                            <span className="text-xs text-text-secondary flex-shrink-0">
+                                                {new Date(activity.timestamp).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                            </span>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        </AccordionItem>
+                    ))
+                ) : (
+                    <p className="text-text-secondary text-center py-8">Nenhuma atividade encontrada para este membro.</p>
+                )}
+            </div>
+        </Modal>
       )}
     </div>
   );

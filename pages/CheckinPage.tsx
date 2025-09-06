@@ -31,6 +31,7 @@ const CheckinPage: React.FC = () => {
         staffName: staff.name,
         eventId: event.id,
         departmentId: staff.departmentId,
+        staffId: staff.id,
       }));
       navigate(`/informes/${boothCode.toUpperCase()}`);
     } catch (err) {

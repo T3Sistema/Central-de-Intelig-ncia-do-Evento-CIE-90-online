@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { getButtonConfigs, addButtonConfig, updateButtonConfig, deleteButtonConfig, getDepartmentsByEvent } from '../../services/api';
-import { ReportButtonConfig, ReportType, ReportOption, Department } from '../../types';
+import { getButtonConfigs, addButtonConfig, updateButtonConfig, deleteButtonConfig, getDepartmentsByEvent, getStaffByEvent } from '../../services/api';
+import { ReportButtonConfig, ReportType, ReportOption, Department, Staff } from '../../types';
 import Modal from '../Modal';
 import Input from '../Input';
 import Button from '../Button';
@@ -14,6 +14,7 @@ const emptyButton: Omit<ReportButtonConfig, 'id'> = {
   type: ReportType.OPEN_TEXT, 
   options: [], 
   departmentId: '',
+  staffId: '',
   followUp: { 
     triggerValue: 'Sim', 
     question: '', 
@@ -26,6 +27,7 @@ const ButtonsManager: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>();
   const [buttons, setButtons] = useState<ReportButtonConfig[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [staffList, setStaffList] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
@@ -36,12 +38,14 @@ const ButtonsManager: React.FC = () => {
   const fetchData = useCallback(async () => {
     setLoading(true);
     if(eventId) {
-        const [buttonsData, departmentsData] = await Promise.all([
+        const [buttonsData, departmentsData, staffData] = await Promise.all([
             getButtonConfigs(),
-            getDepartmentsByEvent(eventId)
+            getDepartmentsByEvent(eventId),
+            getStaffByEvent(eventId)
         ]);
         setButtons(buttonsData);
         setDepartments(departmentsData);
+        setStaffList(staffData);
     }
     setLoading(false);
   }, [eventId]);
@@ -62,7 +66,7 @@ const ButtonsManager: React.FC = () => {
       setCurrentButton(buttonCopy);
       setIsEditing(true);
     } else {
-      setCurrentButton(emptyButton);
+      setCurrentButton(JSON.parse(JSON.stringify(emptyButton)));
       setIsEditing(false);
     }
     setIsModalOpen(true);
@@ -122,10 +126,10 @@ const ButtonsManager: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const dataToSubmit = { ...currentButton };
-    // Ensure empty string is saved as undefined/null if needed by backend, for now, empty string is fine.
-    if (dataToSubmit.departmentId === '') {
-        delete dataToSubmit.departmentId;
-    }
+    
+    if (dataToSubmit.departmentId === '') delete dataToSubmit.departmentId;
+    if (dataToSubmit.staffId === '') delete dataToSubmit.staffId;
+
 
     if (isEditing) {
       await updateButtonConfig(dataToSubmit as ReportButtonConfig);
@@ -156,6 +160,7 @@ const ButtonsManager: React.FC = () => {
         case ReportType.OPEN_TEXT: return "Resposta Aberta";
         case ReportType.MULTIPLE_CHOICE: return "Múltipla Escolha";
         case ReportType.YES_NO: return "Sim/Não com Acompanhamento";
+        case ReportType.CHECKLIST: return "Checklist";
         default: return "Desconhecido";
     }
   }
@@ -164,6 +169,8 @@ const ButtonsManager: React.FC = () => {
     if (!id) return 'Geral';
     return departments.find(d => d.id === id)?.name || 'Desconhecido';
   }
+
+  const getStaffName = (id?: string) => staffList.find(s => s.id === id)?.name;
 
   if (loading) return <LoadingSpinner />;
 
@@ -174,19 +181,32 @@ const ButtonsManager: React.FC = () => {
         <Button onClick={() => handleOpenModal()}>Adicionar Botão</Button>
       </div>
       <div className="space-y-4">
-        {buttons.map(button => (
-          <div key={button.id} className="p-4 border border-border rounded-lg flex justify-between items-center">
-            <div>
-              <p className="font-bold text-lg">{button.label}</p>
-              <p className="text-sm text-text-secondary">{getButtonTypeDescription(button.type)}</p>
-               <p className="text-xs mt-1 text-primary-dark font-semibold bg-secondary py-0.5 px-2 rounded-full inline-block">{getDepartmentName(button.departmentId)}</p>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => handleOpenModal(button)} className="py-1 px-2 text-sm">Editar</Button>
-              <Button variant="danger" onClick={() => handleDeleteClick(button.id)} className="py-1 px-2 text-sm">Excluir</Button>
-            </div>
-          </div>
-        ))}
+        {buttons.map(button => {
+           const assignedStaffName = getStaffName(button.staffId);
+           return (
+              <div key={button.id} className="p-4 border border-border rounded-lg flex justify-between items-center">
+                <div>
+                  <p className="font-bold text-lg">{button.label}</p>
+                  <p className="text-sm text-text-secondary">{getButtonTypeDescription(button.type)}</p>
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      <span className="text-xs text-primary-dark font-semibold bg-secondary py-0.5 px-2 rounded-full inline-block">{getDepartmentName(button.departmentId)}</span>
+                      {assignedStaffName && (
+                          <span className="text-xs text-yellow-200 font-semibold bg-yellow-800 py-0.5 px-2 rounded-full inline-flex items-center">
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                              </svg>
+                              {assignedStaffName}
+                          </span>
+                      )}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="secondary" onClick={() => handleOpenModal(button)} className="py-1 px-2 text-sm">Editar</Button>
+                  <Button variant="danger" onClick={() => handleDeleteClick(button.id)} className="py-1 px-2 text-sm">Excluir</Button>
+                </div>
+              </div>
+          )
+        })}
       </div>
 
       <Modal isOpen={isModalOpen} onClose={handleCloseModal} title={isEditing ? 'Editar Botão' : 'Adicionar Botão'}>
@@ -202,12 +222,22 @@ const ButtonsManager: React.FC = () => {
               ))}
             </select>
           </div>
+           <div>
+            <label htmlFor="staffId" className="block text-sm font-medium mb-1">Atribuir à Equipe (Opcional)</label>
+            <select id="staffId" name="staffId" value={currentButton.staffId || ''} onChange={handleChange} className="w-full p-2 border border-border rounded-md bg-background">
+              <option value="">Geral (toda a equipe do departamento)</option>
+              {staffList.map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
           <div>
             <label htmlFor="type" className="block text-sm font-medium mb-1">Tipo de Resposta</label>
             <select id="type" name="type" value={currentButton.type} onChange={handleChange} className="w-full p-2 border border-border rounded-md bg-background">
               <option value={ReportType.OPEN_TEXT}>Resposta Aberta</option>
               <option value={ReportType.MULTIPLE_CHOICE}>Múltipla Escolha</option>
               <option value={ReportType.YES_NO}>Sim/Não com Acompanhamento</option>
+              <option value={ReportType.CHECKLIST}>Checklist</option>
             </select>
           </div>
           {currentButton.type === ReportType.MULTIPLE_CHOICE && (
@@ -220,6 +250,18 @@ const ButtonsManager: React.FC = () => {
                 </div>
               ))}
               <Button type="button" variant="secondary" onClick={addOption} className="text-sm">Adicionar Opção</Button>
+            </div>
+          )}
+           {currentButton.type === ReportType.CHECKLIST && (
+            <div className="space-y-2 border-t border-border pt-4 mt-4">
+              <h4 className="font-semibold">Itens do Checklist</h4>
+              {currentButton.options?.map((opt, index) => (
+                <div key={opt.id || index} className="flex items-center gap-2">
+                  <Input id={`option-${index}`} label="" value={opt.label} onChange={(e) => handleOptionChange(index, e.target.value)} className="flex-grow mb-0"/>
+                  <Button type="button" variant="danger" onClick={() => removeOption(index)} className="py-1 px-2 text-sm">X</Button>
+                </div>
+              ))}
+              <Button type="button" variant="secondary" onClick={addOption} className="text-sm">Adicionar Item</Button>
             </div>
           )}
           {currentButton.type === ReportType.YES_NO && (

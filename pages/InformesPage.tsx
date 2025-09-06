@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getReportButtonsForBooth, submitReport, validateCheckin } from '../services/api';
+import { getReportButtonsForBooth, submitReport, validateCheckin, getButtonConfigs } from '../services/api';
 import { ReportButtonConfig, ReportType } from '../types';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Button from '../components/Button';
@@ -11,7 +11,7 @@ const InformesPage: React.FC = () => {
   const { boothCode } = useParams<{ boothCode: string }>();
   const navigate = useNavigate();
   
-  const [checkinInfo, setCheckinInfo] = useState<{staffName: string, eventId: string, personalCode: string, departmentId?: string, companyName: string} | null>(null);
+  const [checkinInfo, setCheckinInfo] = useState<{staffName: string, eventId: string, personalCode: string, departmentId?: string, companyName: string, staffId: string} | null>(null);
   const [allButtons, setAllButtons] = useState<ReportButtonConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -20,6 +20,7 @@ const InformesPage: React.FC = () => {
   const [selectedButton, setSelectedButton] = useState<ReportButtonConfig | null>(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [primaryResponse, setPrimaryResponse] = useState('');
+  const [checklistSelection, setChecklistSelection] = useState<string[]>([]);
   const [followUpResponse, setFollowUpResponse] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submissionSuccess, setSubmissionSuccess] = useState<boolean | null>(null);
@@ -41,7 +42,8 @@ const InformesPage: React.FC = () => {
             eventId: info.eventId || '',
             personalCode: info.personalCode || '',
             departmentId: info.departmentId,
-            companyName: info.companyName || ''
+            companyName: info.companyName || '',
+            staffId: info.staffId || ''
         });
       } catch (e) {
         console.error("Failed to parse checkinInfo from sessionStorage", e);
@@ -55,8 +57,23 @@ const InformesPage: React.FC = () => {
       if (!boothCode) return;
       try {
         setLoading(true);
-        const fetchedButtons = await getReportButtonsForBooth(boothCode);
-        setAllButtons(fetchedButtons);
+        // Fetch buttons specifically assigned to the company AND all other buttons in the system.
+        // This ensures staff-specific buttons are always available to be filtered.
+        const [companyButtons, allSystemButtons] = await Promise.all([
+            getReportButtonsForBooth(boothCode),
+            getButtonConfigs()
+        ]);
+
+        // Merge the two lists, removing duplicates.
+        const buttonsMap = new Map<string, ReportButtonConfig>();
+        companyButtons.forEach(btn => buttonsMap.set(btn.id, btn));
+        allSystemButtons.forEach(btn => {
+            if (!buttonsMap.has(btn.id)) {
+                buttonsMap.set(btn.id, btn);
+            }
+        });
+        
+        setAllButtons(Array.from(buttonsMap.values()));
       } catch (err) {
         setError('Falha ao carregar as ações.');
       } finally {
@@ -67,15 +84,24 @@ const InformesPage: React.FC = () => {
   }, [boothCode, navigate]);
 
   const visibleButtons = useMemo(() => {
-    if (!checkinInfo) return [];
-    // Show buttons for the staff's department OR buttons with no department (general)
-    return allButtons.filter(button => !button.departmentId || button.departmentId === checkinInfo.departmentId);
+    if (!checkinInfo || !checkinInfo.staffId) return [];
+    
+    // A button is visible if:
+    // 1. It is assigned directly to the logged-in staff member.
+    // 2. OR, if not assigned to a specific staff member, it follows the department/general logic:
+    //    a. It is visible if it has no department (general for all).
+    //    b. OR it is visible if its department matches the staff's department.
+    return allButtons.filter(button => 
+        button.staffId === checkinInfo.staffId || 
+        (!button.staffId && (!button.departmentId || button.departmentId === checkinInfo.departmentId))
+    );
   }, [allButtons, checkinInfo]);
 
   const handleButtonClick = (button: ReportButtonConfig) => {
     setSelectedButton(button);
     setPrimaryResponse('');
     setFollowUpResponse('');
+    setChecklistSelection([]);
     setSubmissionSuccess(null);
     setIsReportModalOpen(true);
   };
@@ -89,6 +115,15 @@ const InformesPage: React.FC = () => {
     sessionStorage.removeItem('checkinInfo');
     navigate('/');
   }
+  
+  const handleChecklistChange = (value: string) => {
+    setChecklistSelection(prev =>
+        prev.includes(value)
+            ? prev.filter(item => item !== value)
+            : [...prev, value]
+    );
+  };
+
 
   const handleSwitchBooth = async () => {
     if (!newBoothCode || !checkinInfo?.personalCode) {
@@ -106,6 +141,7 @@ const InformesPage: React.FC = () => {
             staffName: staff.name,
             eventId: event.id,
             departmentId: staff.departmentId,
+            staffId: staff.id,
         }));
         setIsSwitchModalOpen(false);
         setNewBoothCode('');
@@ -126,7 +162,10 @@ const InformesPage: React.FC = () => {
     setSubmissionSuccess(null);
 
     let finalResponse = primaryResponse;
-    if (
+
+    if (selectedButton.type === ReportType.CHECKLIST) {
+        finalResponse = checklistSelection.length > 0 ? checklistSelection.join(', ') : 'Nenhum item selecionado.';
+    } else if (
       selectedButton.type === ReportType.YES_NO && 
       selectedButton.followUp &&
       primaryResponse === selectedButton.followUp.triggerValue &&
@@ -222,6 +261,24 @@ const InformesPage: React.FC = () => {
                         onChange={(e) => setPrimaryResponse(e.target.value)}
                         required
                         className="form-radio text-primary focus:ring-primary"
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              {selectedButton.type === ReportType.CHECKLIST && selectedButton.options && (
+                <div className="space-y-2">
+                  {selectedButton.options.map((option) => (
+                    <label key={option.id} className="flex items-center gap-2 p-2 rounded-md hover:bg-border cursor-pointer">
+                      <input
+                        type="checkbox"
+                        name="report-option-checklist"
+                        value={option.label}
+                        checked={checklistSelection.includes(option.label)}
+                        onChange={() => handleChecklistChange(option.label)}
+                        className="form-checkbox h-5 w-5 rounded text-primary focus:ring-primary bg-background border-border"
                       />
                       <span>{option.label}</span>
                     </label>
